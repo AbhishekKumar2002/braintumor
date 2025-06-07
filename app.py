@@ -2,51 +2,53 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
 import requests
-from PIL import Image
+import tempfile
+import os
 import tensorflow as tf
-from io import BytesIO
 
 app = Flask(__name__)
 CORS(app)
 
 MODEL_URL = "https://kitish-whatsapp-bot-media.s3.ap-south-1.amazonaws.com/documentMessage_1749284032628.bin"
 
-# Load model from BytesIO (no need for h5py)
 def load_model_from_url(url):
-    response = requests.get(url)
+    # Download model bytes
+    response = requests.get(url, stream=True)
     if response.status_code != 200:
-        raise Exception("Could not fetch model from URL.")
-    return tf.keras.models.load_model(BytesIO(response.content))
+        raise Exception("Could not fetch model")
 
+    # Create a temporary file to save the model
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".h5") as tmp_file:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                tmp_file.write(chunk)
+        tmp_path = tmp_file.name
+
+    # Load the model from the temp file
+    model = tf.keras.models.load_model(tmp_path)
+
+    # Remove temp file after loading
+    os.remove(tmp_path)
+
+    return model
+
+# Load model once globally at startup (this will download and load)
 model = load_model_from_url(MODEL_URL)
-
-class_names = ["Glioma", "Meningioma", "No Tumor", "Pituitary"]
 
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        # Read uploaded file from form-data
-        file = request.files['file']
-        image = Image.open(file).convert("RGB")
-        image = image.resize((150, 150))
-        img_array = np.array(image) / 255.0
-        img_array = img_array.reshape(1, 150, 150, 3)
+        data = request.get_json(force=True)
+        input_data = data.get("input")
 
-        # Predict
-        preds = model.predict(img_array)
-        label_index = np.argmax(preds)
-        label = class_names[label_index]
-        confidence = float(preds[0][label_index])
+        if input_data is None:
+            return jsonify({"error": "Missing input"}), 400
 
-        return jsonify({
-            "success": True,
-            "label": label,
-            "confidence": confidence
-        })
-
+        input_array = np.array(input_data).reshape(1, -1)
+        prediction = model.predict(input_array)
+        return jsonify({"prediction": prediction.tolist()})
     except Exception as e:
-        print("❌ Error during prediction:", str(e))
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
