@@ -1,6 +1,7 @@
 flask
 flask-cors
-tensorflow
+tensorflow==2.12.0
 numpy
 requests
 h5py
+gunicorn
