@@ -1,6 +1,7 @@
-flask==2.3.2
-flask-cors==3.0.10
-tensorflow==2.13.0
-requests==2.31.0
-gunicorn==20.1.0
-h5py==3.9.0
+flask
+flask-cors
+numpy
+requests
+pillow
+tensorflow==2.12.0  # adjust based on your training version
+gunicorn
