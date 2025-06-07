@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
 import requests
-import h5py
+from PIL import Image
 import tensorflow as tf
 from io import BytesIO
 
@@ -11,33 +11,42 @@ CORS(app)
 
 MODEL_URL = "https://kitish-whatsapp-bot-media.s3.ap-south-1.amazonaws.com/documentMessage_1749284032628.bin"
 
+# Load model from BytesIO (no need for h5py)
 def load_model_from_url(url):
     response = requests.get(url)
     if response.status_code != 200:
-        raise Exception("Could not fetch model")
-    
-    model_bytes = BytesIO(response.content)
-    with h5py.File(model_bytes, 'r') as f:
-        model = tf.keras.models.load_model(f)
-    return model
+        raise Exception("Could not fetch model from URL.")
+    return tf.keras.models.load_model(BytesIO(response.content))
 
-# Load model once globally
 model = load_model_from_url(MODEL_URL)
+
+class_names = ["Glioma", "Meningioma", "No Tumor", "Pituitary"]
 
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
-        data = request.get_json(force=True)
-        input_data = data.get("input")
+        # Read uploaded file from form-data
+        file = request.files['file']
+        image = Image.open(file).convert("RGB")
+        image = image.resize((150, 150))
+        img_array = np.array(image) / 255.0
+        img_array = img_array.reshape(1, 150, 150, 3)
 
-        if input_data is None:
-            return jsonify({"error": "Missing input"}), 400
+        # Predict
+        preds = model.predict(img_array)
+        label_index = np.argmax(preds)
+        label = class_names[label_index]
+        confidence = float(preds[0][label_index])
 
-        input_array = np.array(input_data).reshape(1, -1)
-        prediction = model.predict(input_array)
-        return jsonify({"prediction": prediction.tolist()})
+        return jsonify({
+            "success": True,
+            "label": label,
+            "confidence": confidence
+        })
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("❌ Error during prediction:", str(e))
+        return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
